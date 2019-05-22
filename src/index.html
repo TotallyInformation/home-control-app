@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en" manifest="uibuilder.appcache">
+
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=yes">
+
+        <!-- See https://goo.gl/OOhYW5 -->
+        <link rel="manifest" href="./manifest.json">
+        <meta name="theme-color" content="#3f51b5">
+
+        <!-- Used if adding to homescreen for Chrome on Android. Fallback for manifest.json -->
+        <meta name="mobile-web-app-capable" content="yes">
+        <meta name="application-name" content="Home Dashboard">
+
+        <!-- Used if adding to homescreen for Safari on iOS -->
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="apple-mobile-web-app-title" content="Home Dashboard">
+
+        <!-- Homescreen icons for Apple mobile use if required
+        <link rel="apple-touch-icon" href="/images/manifest/icon-48x48.png">
+        <link rel="apple-touch-icon" sizes="72x72" href="/images/manifest/icon-72x72.png">
+        <link rel="apple-touch-icon" sizes="96x96" href="/images/manifest/icon-96x96.png">
+        <link rel="apple-touch-icon" sizes="144x144" href="/images/manifest/icon-144x144.png">
+        <link rel="apple-touch-icon" sizes="192x192" href="/images/manifest/icon-192x192.png">
+        -->
+
+        <title>Node-RED UI Builder</title>
+        <meta name="description" content="Home Dashboard">
+
+        <link rel="icon" href="./images/node-blue.ico">
+
+        <link type="text/css" rel="stylesheet" href="./vendor/bootstrap/dist/css/bootstrap.min.css" />
+        <link type="text/css" rel="stylesheet" href="./vendor/bootstrap-vue/dist/bootstrap-vue.css" />
+        <link rel="stylesheet" href="./index.css">
+
+    </head>
+
+    <body>
+        <script type="text/x-template" id="lights-tab-template">
+            <div>
+                <h5>Room Switches</h5>
+                <div v-for="room in homeData" :key="room.Name" v-if="room.switches">
+                    <b-row class="my-2">
+                        <b-col cols="6" sm="3" md="2">
+                            {{ room.Name }}
+                        </b-col>
+                        <b-col>
+                            <b-button-group >
+                                <b-button v-for="sw in switches" :key="sw.id"
+                                        v-if="sw.room === room.Name"
+                                        :variant="sw.status === 'On' ? 'success' : ''"
+                                        @click="switchClick([sw.id, sw.status])"
+                                        v-b-popover.focus.hover.bottomright="{content:`Last Update: ${fmtTime(sw.lastUpdate)}`}">
+                                    {{ sw.id.replace('SWITCH','') }} - {{ _.capitalize(sw.status) }}
+                                </b-button>
+                            </b-button-group>
+                        </b-col>
+                    </b-row>
+                </div>
+            </div>
+        </script>
+        <script type="text/x-template" id="demand-card-template">
+            <b-card id="demand_card" header-tag="header" footer-tag="footer" class="text-center shadow"
+                    v-b-popover.focus.hover.bottomright="{content:'Bar shows overall % demand. See room details for room demands.'}"
+                    >
+                <h6 slot="header">Demand</h6>
+                <b-progress :max="demandMax" height="2rem">
+                    <b-progress-bar :value="percentageDemand" :variant="demandLevel">{{percentageDemand}}%</b-progress-bar>
+                </b-progress>
+                <div slot="footer">
+                    <span :class="classDemandActive">
+                        Boiler {{demandOnOffOutput}}
+                    </span>
+                    ,
+                    <span :class="classIsBoosted">
+                        Boost {{ isBoostedText }}
+                    </span>
+                </div>
+            </b-card>
+        </script>
+        <script type="text/x-template" id="device-tab-template">
+            <div>
+                <h5>Devices</h5>
+                <div v-for="device in orderedDevices" :key="device.id">
+                    <b-row class="my-2">
+                        <b-col cols="6" sm="3" md="2">
+                                {{ device.id }}
+                        </b-col>
+                        <b-col>
+                            <b-button :variant="device.status === 'Online' ? 'success' : 'warning'"
+                                    v-b-popover.focus.hover.bottomright="{content:`Last Update: ${fmtTime(device.lastUpdate)}`}">
+                                {{ _.capitalize(device.status) }}{{ device.room ? ' - ' : '' }}{{ device.room }}
+                            </b-button>
+                        </b-col>
+                        <b-col>
+                                {{ fmtTime(device.lastUpdate) }}
+                        </b-col>
+                    </b-row>
+                </div>
+            </div>
+
+        </script>
+
+        <!-- The "app" element is where the code for dynamic updates is attached -->
+        <div id="app">
+            <b-container id="app_container">
+                <b-navbar toggleable="md" type="dark" variant="dark">
+                    <b-navbar-toggle target="nav_collapse"></b-navbar-toggle>
+
+                    <b-navbar-brand href="#" v-b-popover.focus.hover.bottomright="{content:'Heating information and controls.'}">
+                        Home
+                    </b-navbar-brand>
+
+                    <b-collapse is-nav id="nav_collapse">
+                        <b-navbar-nav>
+                            <b-nav-text
+                                    v-b-popover.focus.hover.bottomright="{title:'Last update',content:'A warning will appear if no updates have been received in 2 minutes.'}"
+                                    >
+                                {{lastUpdate}}
+                            </b-nav-text>
+                            <b-nav-text v-if="demandOnOffOutput === 'On'"
+                                    v-b-popover.focus.hover.bottomright="{content:`Boiler is ${demandOnOffOutput}, Boost is ${isBoostedText}`}"
+                                    >
+                                <svg height="24" style="margin-left:1em" class="octicon octicon-flame" viewBox="0 0 12 16" version="1.1" width="24" aria-hidden="true">
+                                    <path :style="isBoostedFill" fill-rule="evenodd" d="M5.05.31c.81 2.17.41 3.38-.52 4.31C3.55 5.67 1.98 6.45.9 7.98c-1.45 2.05-1.7 6.53 3.53 7.7-2.2-1.16-2.67-4.52-.3-6.61-.61 2.03.53 3.33 1.94 2.86 1.39-.47 2.3.53 2.27 1.67-.02.78-.31 1.44-1.13 1.81 3.42-.59 4.78-3.42 4.78-5.56 0-2.84-2.53-3.22-1.25-5.61-1.52.13-2.03 1.13-1.89 2.75.09 1.08-1.02 1.8-1.86 1.33-.67-.41-.66-1.19-.06-1.78C8.18 5.31 8.68 2.45 5.05.32L5.03.3l.02.01z"></path>
+                                </svg>
+                            </b-nav-text>
+                        </b-navbar-nav>
+
+                        <!-- Right aligned nav items -->
+                        <b-navbar-nav class="ml-auto">
+                            <b-nav-item-dropdown right
+                            v-b-popover.focus.hover.bottomright="{content:'Links to other dashboards.'}">
+                                <template slot="button-content">
+                                    <em>Dashboards</em>
+                                </template>
+                                <b-dropdown-item href="/ui">Quick Dashboard</b-dropdown-item>
+                                <b-dropdown-item href="https://pi3.knightnet.co.uk:3000/" onclick="javascript:window.location.port=3000">Detailed
+                                    Dashboard</b-dropdown-item>
+                            </b-nav-item-dropdown>
+                            <b-nav-item-dropdown right
+                            v-b-popover.focus.hover.bottomright="{content:'Links to admin web pages.'}">
+                                <template slot="button-content">
+                                    <em>Admin</em>
+                                </template>
+                                <b-dropdown-item href="/red">Administration</b-dropdown-item>
+                            </b-nav-item-dropdown>
+                            <b-nav-item-dropdown right
+                                    v-b-popover.focus.hover.bottomright="{content:'Links to direct device web pages.'}">
+                                <template slot="button-content">
+                                    <em>Devices</em>
+                                </template>
+                                <b-dropdown-item href="http://192.168.1.152/status">D1M02</b-dropdown-item>
+                                <b-dropdown-item href="http://192.168.1.187/">D1M04</b-dropdown-item>
+                                <b-dropdown-item href="http://192.168.1.188/">D1M05</b-dropdown-item>
+                                <b-dropdown-item href="http://192.168.1.159">POW1</b-dropdown-item>
+                            </b-nav-item-dropdown>
+                        </b-navbar-nav>
+
+                    </b-collapse>
+                </b-navbar>
+
+                <b-container id="warnings">
+                    <b-alert variant="danger" :show="showNoUpdAlert" @dismissed="showNoUpdAlert=false">
+                        <h4 class="alert-heading">Heating Warning:</h4>
+                        <p>
+                            No heating data update received in over 2 minutes.
+                        </p>
+                        <hr>
+                        <p>
+                            Check that the controller (on kitchen wall) is on and isn't showing red lights.
+                        </p>
+                        <p>
+                            If any red lights showing, gently pull forwards the bottom of the controller until the
+                            lights go off, wait 30sec then push the bottom back. The lights should go green after about
+                            a minute.
+                        </p>
+                        This alert will go away when data is received again.
+                    </b-alert>
+                </b-container>
+
+                <b-card no-body id="main">
+                    <b-tabs card id="tabs" v-model="tabIndex" @input="changeTab">
+                        <b-tab title="Lights">
+                            <lights-tab :home-data="homeData" :switches="switches"></lights-tab>
+                        </b-tab>
+
+                        <b-tab title="Heating">
+                            Sorry, not ready yet
+                        </b-tab>
+
+                        <b-tab title="Details">
+                            <b-row>
+                                <b-col cols="3">
+                                    <demand-card
+                                        :percentage-demand="percentageDemand"
+                                        :demand-level="demandLevel"
+                                        :demand-max="demandMax"
+                                        :demand-on-off-output="demandOnOffOutput"
+                                        :is-boosted="isBoosted">
+                                    </demand-card>
+                                </b-col>
+
+                                <b-col>
+                                    <b-card id="rooms_card" class="shadow">
+                                        <b-table responsive flex hover head-variant="dark" small stacked="sm" outlined
+                                                :items="homeData" :fields="homeDataFields"
+                                                :filter="currentRoomsTblFilter" @row-clicked="onRoomsRowClicked">
+                                            <template slot="override" slot-scope="row">
+                                                <p class="my-0"
+                                                    v-b-popover.focus.hover.bottomright="{content:`Override: ${row.value}, Setpoint Origin: ${row.item.SetPointOrigin}`, title:'Heating Override Active?'}"
+                                                    >
+                                                    <b-form-checkbox v-model="row.value" disabled></b-form-checkbox>
+                                                </p>
+                                            </template>
+                                            <template slot="details" slot-scope="row" @click="row.toggleDetails">
+                                                <b-form-checkbox @click.native.stop @change="row.toggleDetails"
+                                                        v-model="row.detailsShowing"
+                                                        v-b-popover.focus.hover.bottomright="{content:`Show Details for ${row.item.Name}`}">
+                                                </b-form-checkbox>
+                                            </template>
+                                            <template slot="row-details" slot-scope="row">
+                                                <b-card>
+                                                    <b-card v-if="row.item.ControlOutputState" border-variant="light">
+                                                        <b-row class="my-0">
+                                                            <b-col class="text-sm-right"><b>% Demand:</b></b-col>
+                                                            <b-col>{{ row.item.percentageDemand }}</b-col>
+                                                        </b-row>
+                                                        <b-row class="my-0">
+                                                            <b-col class="text-sm-right"><b>Ctrl Output State:</b></b-col>
+                                                            <b-col>{{ row.item.ControlOutputState }}</b-col>
+                                                        </b-row>
+
+                                                        <b-row class="mt-2 mb-0">
+                                                            <b-col class="text-sm-right">
+                                                                <b>Current/Scheduled Room Setpoint:</b>
+                                                            </b-col>
+                                                            <b-col>
+                                                                {{ row.item.DisplayedSetPoint === -200 ? 'OFF' : (row.item.DisplayedSetPoint/10) }}°c /
+                                                                {{ row.item.ScheduledSetPoint === -200 ? 'OFF' : (row.item.ScheduledSetPoint/10) }}°c
+                                                            </b-col>
+                                                        </b-row>
+                                                        <b-row class="my-0">
+                                                            <b-col class="text-sm-right">
+                                                                <b>Setpoint Origin:</b>
+                                                            </b-col>
+                                                            <b-col>
+                                                                {{ row.item.SetPointOrigin }}
+                                                            </b-col>
+                                                        </b-row>
+                                                        <b-row class="my-0">
+                                                            <b-col class="text-sm-right">
+                                                                <b>Override Type:</b>
+                                                            </b-col>
+                                                            <b-col>
+                                                                {{ row.item.OverrideType }}
+                                                            </b-col>
+                                                        </b-row>
+                                                    </b-card>
+
+                                                    <b-card border-variant="light" v-if="row.item.devices.length > 0">
+                                                        <b-row class="my-0">
+                                                            <b-col>
+                                                                <h6>Room Heating Devices</h6>
+                                                            </b-col>
+                                                        </b-row>                                                    <b-row>
+                                                        <b-row>
+                                                            <b-col>
+                                                                <b-table responsive flex small stacked="sm" class="my-0"
+                                                                    :items="row.item.devices" :fields="hdDetailsFields">
+                                                                </b-table>
+                                                            </b-col>
+                                                        </b-row>
+                                                    </b-card>
+
+                                                    <b-card border-variant="light" v-if="row.item.sensors">
+                                                        <b-row class="my-0">
+                                                            <b-col><h6>Room Sensors</h6></b-col>
+                                                        </b-row>
+                                                        <b-row class="my-0">
+                                                            <b-col class="text-sm-right"><b>Temperature:</b></b-col>
+                                                            <b-col>{{ row.item.sensors.Temperature }}°c</b-col>
+                                                        </b-row>
+                                                        <b-row class="my-0">
+                                                            <b-col class="text-sm-right"><b>Humidity:</b></b-col>
+                                                            <b-col>{{ row.item.sensors.Humidity }}%</b-col>
+                                                        </b-row>
+                                                        <b-row v-if="row.item.sensors.Light" class="my-0">
+                                                            <b-col class="text-sm-right"><b>Light:</b></b-col>
+                                                            <b-col>{{ row.item.sensors.Light }} Lux</b-col>
+                                                        </b-row>
+                                                    </b-card>
+
+                                                    <b-button slot="footer" size="sm" @click="row.toggleDetails">Hide Details</b-button>
+                                                </b-card>
+                                            </template>
+                                        </b-table>
+                                    </b-card>
+                                </b-col>
+                            </b-row>
+                        </b-tab>
+
+                        <b-tab title="Boost">
+                            Sorry, not ready yet
+                        </b-tab>
+
+                        <b-tab title="Schedules">
+                            Sorry, not ready yet
+                        </b-tab>
+
+                        <b-tab title="Devices">
+                            <device-tab :home-data="homeData" :devices="devices"></device-tab>
+                        </b-tab>
+
+                        <b-tab title="Help" v-b-popover.focus.hover.bottomright="{content:'Information on how to use this dashboard.'}">
+                            This is a uibuilder test using <a href="http://vuejs.org/">Vue.js</a> as a front-end
+                            library.
+                            Along with the <a href="https://bootstrap-vue.js.org/docs/">bootstrap-vue</a> component
+                            library.
+                            See the
+                            <a href="https://github.com/TotallyInformation/node-red-contrib-uibuilder">node-red-contrib-uibuilder</a>
+                            README and WIKI for details on how to use UIbuilder.
+                        </b-tab>
+                    </b-tabs>
+                </b-card>
+
+                <b-row no-gutters id="footer" class="text-light p-1 bg-dark">
+                    <b-col>
+                        &nbsp;
+                    </b-col>
+                </b-row>
+            </b-container>
+        </div>
+
+        <!-- These MUST be in the right order. -->
+        <script src="/uibuilder/socket.io/socket.io.js"></script>
+        <script src="./uibuilderfe.min.js"></script>
+        <!-- --- Vendor Libraries - Load in the right order --- -->
+        <script src="https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js"></script>
+        <script src="./vendor/vue/dist/vue.js"></script>
+        <script src="https://unpkg.com/babel-polyfill@latest/dist/polyfill.min.js"></script>
+        <script src="./vendor/bootstrap-vue/dist/bootstrap-vue.js"></script>
+        <!-- <script src="./vendor/bootstrap-vue/dist/bootstrap-vue.min.js"></script> -->
+        <!-- --- Custom code goes in here --- -->
+        <script src="./index.js"></script>
+
+    </body>
+
+</html>

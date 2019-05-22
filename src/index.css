@@ -1,0 +1,14 @@
+pre { background-color: #212121 !important; color: wheat;}
+.tcentre { text-align: center; }
+.uk-table th {
+    position: sticky; top: 0; z-index: 1;
+    background-color:black; color:#EEEEEE;
+}
+pre .string { color: orange; }
+.number { color: white; }
+.boolean { color: rgb(20, 99, 163); }
+.null { color: magenta; }
+.key { color: #069fb3;}
+
+card-l-primary, l-primary, btn-l-primary {background-color: #73b7ff!important;}
+.nodisplay { display: none; }

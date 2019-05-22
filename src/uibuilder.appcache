@@ -1,0 +1,18 @@
+CACHE MANIFEST
+
+CACHE:
+images/node-blue-192x192.png
+images/node-blue.ico
+vendor/bootstrap/dist/css/bootstrap.min.css
+vendor/bootstrap-vue/dist/bootstrap-vue.css
+index.css
+/uibuilder/socket.io/socket.io.js
+uibuilderfe.min.js
+vendor/vue/dist/vue.js
+vendor/bootstrap-vue/dist/bootstrap-vue.js
+index.js
+https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js
+https://unpkg.com/babel-polyfill@latest/dist/polyfill.min.js
+
+NETWORK:
+*
